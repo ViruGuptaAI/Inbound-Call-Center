@@ -18,7 +18,7 @@ param useApplicationInsights bool = true
 param useContainerRegistry bool = true
 param appExists bool
 @description('The OpenAI model name')
-param modelName string = ' gpt-4o-mini'
+param modelName string = ' gpt-4.1'
 @description('Id of the user or app to assign application roles. If ommited will be generated from the user assigned identity.')
 param principalId string = ''
 

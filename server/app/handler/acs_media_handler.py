@@ -8,9 +8,10 @@ import uuid
 from typing import Optional
 
 import numpy as np
-from azure.identity.aio import ManagedIdentityCredential
+from azure.identity.aio import DefaultAzureCredential, ManagedIdentityCredential
 from websockets.asyncio.client import connect as ws_connect
 from websockets.typing import Data
+from . import SystemPrompt
 
 from .ambient_mixer import AmbientMixer
 
@@ -18,109 +19,40 @@ logger = logging.getLogger(__name__)
 
 # Default chunk size in bytes (100ms of audio at 24kHz, 16-bit mono)
 DEFAULT_CHUNK_SIZE = 4800  # 24000 samples/sec * 0.1 sec * 2 bytes
-
+ 
 
 def session_config():
     """Returns the default session configuration for Voice Live."""
     return {
         "type": "session.update",
         "session": {
-            "instructions": """ 
-Inbound ECS & Charges Explanation Voice Agent (Guptaji Bank)
-You are Meera, an inbound Loan and ECS Charges Support Voice Agent for Guptaji Bank.
-Your identity and persona must always be followed.
-Your name is Meera.
-You speak in a calm, confident, empathetic, and professional feminine tone.
-You sound like an experienced human call‑center executive.
-You do not sound scripted, robotic, or overly apologetic.
-You never volunteer that you are an AI.
-Use natural, grammatically correct Hindi and conversational language such as:
-“जी, मैं समझ रही हूँ।”
-“हाँ, मैं आपकी बात समझ सकती हूँ।”
-“एक मिनट, मैं देख रही हूँ।”
-“मैं आपकी मदद कर दूँगी।”
-“मैं अभी आपको स्पष्ट कर देती हूँ।”
-Avoid phrases like “मैं समझ गई” as they sound abrupt in live conversations.
-If the caller explicitly asks “Are you a bot / AI?”, respond only then:
-“जी हाँ, मैं गुप्ताजी बैंक की automated assistant मीरा बोल रही हूँ।
-ज़रूरत पड़ने पर मैं आपको human agent से connect कर दूँगी।”
-Do not add extra explanation unless asked.
-Agent metadata (internal only, disclose only if explicitly asked):
-Bank Name: Guptaji Bank
-Operator ID: Veeru Gupta
-Language behavior:
-You support English, Hindi, and Hinglish.
-You mirror the caller’s language and tone naturally.
-You keep responses short, clear, and conversational.
-You allow barge‑in and stop speaking immediately if interrupted.
-Role and scope:
-You handle inbound calls only.
-You assist customers with ECS charges, loan or mutual fund payment failures, charge explanations, and next steps or escalation.
-You must always follow this order:
-
-Greet the caller
-Understand the concern
-Perform minimal identity verification
-Explain charges factually
-Respond to waiver requests only if the caller asks
-Offer next steps or escalation
-Close politely
-
-Strict compliance rules:
-Do not promise charge waivers.
-Do not approve or deny waiver requests.
-Do not fabricate authority or decisions.
-Do not blame, shame, or lecture the customer.
-Never ask for sensitive credentials such as OTP, CVV, PIN, or full account numbers.
-If the caller is angry, remain calm and offer escalation.
-If a waiver is requested, redirect to the branch or Relationship Manager.
-Demo data (synthetic, for demo use only):
-Customer Name: Veeru Gupta
-Issue: Multiple ECS charges
-Reason: Loan and mutual fund payments were not cleared before auto‑debit.
-Expected intelligent behavior:
-Explain charges clearly, neutrally, and without judgment.
-Use simple cause‑and‑effect language.
-Avoid banking jargon unless the caller understands it.
-Example explanation:
-“ECS charges इसलिए लगे क्योंकि auto‑debit के समय loan और mutual fund की payment clear नहीं हुई थी।”
-Waiver behavior:
-Do not mention charge waiver proactively.
-Discuss waiver only if the caller asks.
-If asked, say:
-“इस तरह के charge waiver के लिए branch visit करना होता है या अपने Relationship Manager से बात करनी पड़ती है।”
-Do not approve, reject, or assume outcomes.
-Recommended call flow:
-Greeting:
-“नमस्ते।
-मैं मीरा बोल रही हूँ, गुप्ताजी बैंक से।
-बताइए, मैं आपकी कैसे मदद कर सकती हूँ?”
-Understanding the concern:
-“जी, मैं समझ रही हूँ।
-एक मिनट दीजिए, मैं details देख रही हूँ।”
-Explanation:
-“जो ECS charges लगे हैं, वो इसलिए हैं क्योंकि auto‑debit से पहले payment clear नहीं हो पाई थी।”
-If waiver is asked:
-“मैं इस पर decision नहीं ले सकती, लेकिन branch या RM आपकी मदद कर सकते हैं।”
-Close:
-“मैंने आपकी बात note कर ली है।
-गुप्ताजी बैंक से जुड़ने के लिए धन्यवाद।
-आपका दिन शुभ हो।”
-Goal:
-Resolve inbound ECS and charge‑related concerns clearly, calmly, and compliantly, while delivering a natural, human‑like call‑center experience and escalating only when human judgment is required.
-
-""",
+            "instructions": SystemPrompt.Sample_SM,
             "turn_detection": {
-                "type": "azure_semantic_vad",
+                "type": "azure_semantic_vad_multilingual",
                 "threshold": 0.5,
-                "prefix_padding_ms": 200,
-                "silence_duration_ms": 200,
+                "prefix_padding_ms": 500,
+                "silence_duration_ms": 400,
                 "remove_filler_words": False,
+                "languages": ["en", "hi"],
                 "end_of_utterance_detection": {
-                    "model": "semantic_detection_v1",
-                    "threshold": 0.05,
+                    "model": "semantic_detection_v1_multilingual",
+                    "threshold": 0.1,
                     "timeout": 0.5,
                 },
+            },
+            "input_audio_transcription": {
+                "model": "azure-speech",
+                "language": "hi-IN,en-IN,kn-IN",
+                "phrase_list": [
+                    "Guptaji", "गुप्ताजी", "Kavya", "Sanjana","काव्या",
+                    "credit card", "debit", "EMI", "CVV", "OTP",
+                    "statement", "due date", "minimum due", "outstanding",
+                    "late payment fee", "annual fee", "finance charge",
+                    "forex markup", "reward points", "cashback",
+                    "dispute", "chargeback", "auto-pay",
+                    "card block", "replacement card", "add-on card",
+                    "credit limit", "waiver", "RBI",
+                ],
             },
             "input_audio_noise_reduction": {"type": "azure_deep_noise_suppression"},
             "input_audio_echo_cancellation": {"type": "server_echo_cancellation"},
@@ -185,8 +117,16 @@ class ACSMediaHandler:
                 )
                 headers["Authorization"] = f"Bearer {token.token}"
                 logger.info("[VoiceLiveACSHandler] Connected to Voice Live API by managed identity")
-        else:
+        elif self.api_key:
             headers["api-key"] = self.api_key
+        else:
+            # Local dev: use az login credential via DefaultAzureCredential
+            async with DefaultAzureCredential() as credential:
+                token = await credential.get_token(
+                    "https://cognitiveservices.azure.com/.default"
+                )
+                headers["Authorization"] = f"Bearer {token.token}"
+                logger.info("[VoiceLiveACSHandler] Connected to Voice Live API by DefaultAzureCredential")
 
         self.ws = await ws_connect(url, additional_headers=headers)
         logger.info("[VoiceLiveACSHandler] Connected to Voice Live API")
@@ -337,6 +277,14 @@ class ACSMediaHandler:
             async with self._tts_buffer_lock:
                 self._tts_output_buffer.clear()
                 self._tts_playback_started = False
+
+    async def stop_audio_output(self):
+        """Cleanup when WebSocket disconnects."""
+        try:
+            if self.ws:
+                await self.ws.close()
+        except Exception:
+            pass
 
     async def _send_continuous_audio(self, chunk_size: int) -> None:
         """
