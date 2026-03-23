@@ -1,0 +1,78 @@
+Name: Veeru Gupta
+Phone (last 4): 1911
+Customer Since: January 2019
+Loyalty Tier: Platinum Elite
+
+═══════════════════════════════════════════
+CREDIT CARDS
+═══════════════════════════════════════════
+
+1. Guptaji Platinum Rewards Card
+   Card Number (last 4): 4421
+   Credit Limit: ₹5,00,000
+   Available Limit: ₹3,25,000
+   Outstanding Balance: ₹1,75,000
+   Minimum Due: ₹8,750
+   Due Date: 5th of every month
+   Last Payment: ₹15,000 on 28-Feb-2026
+   Reward Points: 12,450
+   Auto-Pay: Enabled (minimum due)
+   Annual Fee: ₹2,500 (charged 01-Jan-2026, waived via spend target)
+   Card Status: Active
+
+2. Guptaji ShopSmart Cashback Card
+   Card Number (last 4): 9173
+   Credit Limit: ₹2,00,000
+   Available Limit: ₹1,62,500
+   Outstanding Balance: ₹37,500
+   Minimum Due: ₹1,875
+   Due Date: 5th of every month
+   Last Payment: ₹5,000 on 28-Feb-2026
+   Cashback Earned (FY 2025-26): ₹4,320
+   Auto-Pay: Not Enabled
+   Annual Fee: ₹500 (charged 15-Jul-2025)
+   Card Status: Active
+
+3. Guptaji Voyage Travel Card
+   Card Number (last 4): 6658
+   Credit Limit: ₹8,00,000
+   Available Limit: ₹7,45,000
+   Outstanding Balance: ₹55,000
+   Minimum Due: ₹2,750
+   Due Date: 5th of every month
+   Last Payment: Full payment ₹1,20,000 on 03-Mar-2026
+   Air Miles Earned: 24,800
+   Lounge Access: Unlimited domestic, 4 international/year (2 used)
+   Auto-Pay: Enabled (full amount)
+   Annual Fee: ₹5,000 (charged 01-Apr-2025, not waivable)
+   Card Status: Active
+
+═══════════════════════════════════════════
+FEES & CHARGES SUMMARY (FY 2025-26)
+═══════════════════════════════════════════
+Annual Fee – Platinum Rewards: ₹2,500 → Waived (spend > ₹3L)
+Annual Fee – ShopSmart Cashback: ₹500 (paid)
+Annual Fee – Voyage Travel: ₹5,000 (paid)
+Late Payment Fee: ₹750 (charged 08-Nov-2025 on ShopSmart card)
+Finance Charges (interest): ₹3,214 (Oct-2025, ShopSmart card)
+Forex Markup: 1.75% on international transactions
+GST on Fees: 18% on all charges
+
+═══════════════════════════════════════════
+RECENT TRANSACTIONS
+═══════════════════════════════════════════
+
+Platinum Rewards (4421):
+ 1. 22-Mar-2026 | Amazon.in            | ₹4,299  | EMI (3 months)
+ 2. 15-Mar-2026 | Reliance Fresh       | ₹3,175  | 64 Reward Pts
+ 3. 10-Mar-2026 | BESCOM Electricity   | ₹2,840  | Auto-pay utility
+
+ShopSmart Cashback (9173):
+ 1. 20-Mar-2026 | Swiggy               | ₹862    | Cashback ₹43
+ 2. 12-Mar-2026 | Flipkart             | ₹11,999 | Cashback ₹600
+ 3. 03-Mar-2026 | BigBasket            | ₹2,430  | Cashback ₹122
+
+Voyage Travel (6658):
+ 1. 18-Mar-2026 | MakeMyTrip Flights   | ₹18,450 | 1,845 Air Miles
+ 2. 08-Mar-2026 | Taj Hotel Bangalore  | ₹12,500 | 1,250 Air Miles
+ 3. 01-Mar-2026 | Uber                 | ₹745    | 75 Air Miles

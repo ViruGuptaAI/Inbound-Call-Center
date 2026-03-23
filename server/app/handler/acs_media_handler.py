@@ -4,7 +4,9 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import uuid
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -21,12 +23,45 @@ logger = logging.getLogger(__name__)
 DEFAULT_CHUNK_SIZE = 4800  # 24000 samples/sec * 0.1 sec * 2 bytes
  
 
-def session_config():
-    """Returns the default session configuration for Voice Live."""
+# Directory containing per-user info files (e.g. 8088561911.txt)
+USER_INFO_DIR = Path(__file__).resolve().parent.parent.parent / "UserInfo"
+
+
+def load_user_info(caller_id: str) -> str:
+    """Load user info from a text file matching the caller's phone number."""
+    if not caller_id:
+        return ""
+    # Strip any non-digit characters (e.g. +91, country codes)
+    digits = "".join(c for c in caller_id if c.isdigit())
+    # Try full number first, then last 10 digits (Indian mobile)
+    for candidate in (digits, digits[-10:] if len(digits) > 10 else None):
+        if candidate:
+            filepath = USER_INFO_DIR / f"{candidate}.txt"
+            if filepath.is_file():
+                logger.info("Loaded user info from %s", filepath.name)
+                return filepath.read_text(encoding="utf-8")
+    logger.info("No user info file found for caller %s", caller_id)
+    return ""
+
+
+def session_config(caller_id: str = ""):
+    """Returns the session configuration for Voice Live, enriched with caller info."""
+    instructions = SystemPrompt.Sample_SM
+    user_info = load_user_info(caller_id)
+    if user_info:
+        instructions += (
+            "\n\n═══════════════════════════════════════════\n"
+            "CALLER INFORMATION (from CRM)\n"
+            "═══════════════════════════════════════════\n"
+            f"{user_info}\n"
+            "Use this information to personalise the call. "
+            "Greet the caller by name and proactively reference their account details "
+            "when relevant. Do NOT read out sensitive details unless the caller asks."
+        )
     return {
         "type": "session.update",
         "session": {
-            "instructions": SystemPrompt.Sample_SM,
+            "instructions": instructions,
             "turn_detection": {
                 "type": "azure_semantic_vad_multilingual",
                 "threshold": 0.5,
@@ -42,7 +77,7 @@ def session_config():
             },
             "input_audio_transcription": {
                 "model": "azure-speech",
-                "language": "hi-IN,en-IN,kn-IN",
+                "language": "hi-IN,en-IN,kn-IN,mr-IN",
                 "phrase_list": [
                     "Guptaji", "गुप्ताजी", "Kavya", "Sanjana","काव्या",
                     "credit card", "debit", "EMI", "CVV", "OTP",
@@ -69,11 +104,12 @@ def session_config():
 class ACSMediaHandler:
     """Manages audio streaming between client and Azure Voice Live API."""
 
-    def __init__(self, config):
+    def __init__(self, config, caller_id: str = ""):
         self.endpoint = config["AZURE_VOICE_LIVE_ENDPOINT"]
         self.model = config["VOICE_LIVE_MODEL"]
         self.api_key = config["AZURE_VOICE_LIVE_API_KEY"]
         self.client_id = config["AZURE_USER_ASSIGNED_IDENTITY_CLIENT_ID"]
+        self.caller_id = caller_id
         self.send_queue = asyncio.Queue()
         self.ws = None
         self.send_task = None
@@ -131,7 +167,7 @@ class ACSMediaHandler:
         self.ws = await ws_connect(url, additional_headers=headers)
         logger.info("[VoiceLiveACSHandler] Connected to Voice Live API")
 
-        await self._send_json(session_config())
+        await self._send_json(session_config(self.caller_id))
         await self._send_json({"type": "response.create"})
 
         asyncio.create_task(self._receiver_loop())

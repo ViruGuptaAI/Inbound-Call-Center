@@ -57,8 +57,9 @@ async def acs_event_callbacks(context_id):
 async def acs_ws():
     """WebSocket endpoint for ACS to send audio to Voice Live."""
     logger = logging.getLogger("acs_ws")
-    logger.info("Incoming ACS WebSocket connection")
-    handler = ACSMediaHandler(app.config)
+    caller_id = websocket.args.get("callerId", "")
+    logger.info("Incoming ACS WebSocket connection, callerId=%s", caller_id)
+    handler = ACSMediaHandler(app.config, caller_id=caller_id)
     await handler.init_incoming_websocket(websocket, is_raw_audio=False)
     asyncio.create_task(handler.connect())
     try:
@@ -77,8 +78,9 @@ async def acs_ws():
 async def web_ws():
     """WebSocket endpoint for web clients to send audio to Voice Live."""
     logger = logging.getLogger("web_ws")
-    logger.info("Incoming Web WebSocket connection")
-    handler = ACSMediaHandler(app.config)
+    caller_id = websocket.args.get("callerId", "")
+    logger.info("Incoming Web WebSocket connection, callerId=%s", caller_id)
+    handler = ACSMediaHandler(app.config, caller_id=caller_id)
     await handler.init_incoming_websocket(websocket, is_raw_audio=True)
     asyncio.create_task(handler.connect())
     try:

@@ -82,6 +82,11 @@
   <h1>🎙️ Voice Live Demo UX</h1>
   <div class="subtitle">Talk to an AI agent in real time. Click below to start.</div>
 
+  <div style="margin-bottom: 1.2rem;">
+    <input id="phoneInput" type="tel" placeholder="Enter phone number (e.g. 8088561911)"
+      style="padding: 0.7rem 1rem; font-size: 1rem; border: 1px solid #ccc; border-radius: 0.5rem; width: 280px; text-align: center;" />
+  </div>
+
   <div class="controls">
     <button id="startBtn" onclick="startStreaming()" title="Start talking to the voice agent">
       Start Talking to Agent
@@ -175,8 +180,11 @@
 
     function startStreaming() {
       let wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
-      let wsHost = window.location.host; 
-      socket = new WebSocket(`${wsProtocol}://${wsHost}/web/ws`);
+      let wsHost = window.location.host;
+      let phone = document.getElementById("phoneInput").value.trim();
+      let wsUrl = `${wsProtocol}://${wsHost}/web/ws`;
+      if (phone) wsUrl += `?callerId=${encodeURIComponent(phone)}`;
+      socket = new WebSocket(wsUrl);
       socket.binaryType = "arraybuffer";
 
       socket.onopen = async () => {
