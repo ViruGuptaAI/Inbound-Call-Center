@@ -5,6 +5,8 @@ import base64
 import json
 import logging
 import os
+import socket
+import time
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -23,7 +25,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_CHUNK_SIZE = 4800  # 24000 samples/sec * 0.1 sec * 2 bytes
  
 
-# Directory containing per-user info files (e.g. 8088561911.txt)
+# Directory containing per-user info files (e.g. 9876543210.txt)
 USER_INFO_DIR = Path(__file__).resolve().parent.parent.parent / "UserInfo"
 
 
@@ -31,33 +33,40 @@ def load_user_info(caller_id: str) -> str:
     """Load user info from a text file matching the caller's phone number."""
     if not caller_id:
         return ""
-    # Strip any non-digit characters (e.g. +91, country codes)
     digits = "".join(c for c in caller_id if c.isdigit())
-    # Try full number first, then last 10 digits (Indian mobile)
     for candidate in (digits, digits[-10:] if len(digits) > 10 else None):
         if candidate:
             filepath = USER_INFO_DIR / f"{candidate}.txt"
             if filepath.is_file():
-                logger.info("Loaded user info from %s", filepath.name)
                 return filepath.read_text(encoding="utf-8")
-    logger.info("No user info file found for caller %s", caller_id)
     return ""
 
 
 def session_config(caller_id: str = ""):
     """Returns the session configuration for Voice Live, enriched with caller info."""
-    instructions = SystemPrompt.Sample_SM
+    instructions = SystemPrompt.Inbound_Credit_Cards_Bot
     user_info = load_user_info(caller_id)
     if user_info:
+        caller_name = ""
+        for line in user_info.splitlines():
+            if line.startswith("Name:"):
+                caller_name = line.split(":", 1)[1].strip().split()[0]
+                break
+        if caller_name:
+            instructions = instructions.replace("{Name}", caller_name)
+        logger.info("Returning user: %s (caller_id=%s)", caller_name or "unknown", caller_id)
         instructions += (
             "\n\n═══════════════════════════════════════════\n"
             "CALLER INFORMATION (from CRM)\n"
             "═══════════════════════════════════════════\n"
             f"{user_info}\n"
             "Use this information to personalise the call. "
-            "Greet the caller by name and proactively reference their account details "
-            "when relevant. Do NOT read out sensitive details unless the caller asks."
+            "IMPORTANT: Greet the caller by their first name. "
+            "Proactively reference their account details when relevant. "
+            "Do NOT read out sensitive details like card numbers unless the caller asks."
         )
+    else:
+        logger.info("New user (caller_id=%s)", caller_id)
     return {
         "type": "session.update",
         "session": {
@@ -115,6 +124,7 @@ class ACSMediaHandler:
         self.send_task = None
         self.incoming_websocket = None
         self.is_raw_audio = True
+        self._user_speech_end_ts = None  # timestamp when user stops speaking
 
         # TTS output buffering for continuous ambient mixing
         self._tts_output_buffer = bytearray()
@@ -146,26 +156,22 @@ class ACSMediaHandler:
         headers = {"x-ms-client-request-id": self._generate_guid()}
 
         if self.client_id:
-            # Use async context manager to auto-close the credential
             async with ManagedIdentityCredential(client_id=self.client_id) as credential:
                 token = await credential.get_token(
                     "https://cognitiveservices.azure.com/.default"
                 )
                 headers["Authorization"] = f"Bearer {token.token}"
-                logger.info("[VoiceLiveACSHandler] Connected to Voice Live API by managed identity")
         elif self.api_key:
             headers["api-key"] = self.api_key
         else:
-            # Local dev: use az login credential via DefaultAzureCredential
             async with DefaultAzureCredential() as credential:
                 token = await credential.get_token(
                     "https://cognitiveservices.azure.com/.default"
                 )
                 headers["Authorization"] = f"Bearer {token.token}"
-                logger.info("[VoiceLiveACSHandler] Connected to Voice Live API by DefaultAzureCredential")
 
-        self.ws = await ws_connect(url, additional_headers=headers)
-        logger.info("[VoiceLiveACSHandler] Connected to Voice Live API")
+        self.ws = await ws_connect(url, additional_headers=headers, family=socket.AF_INET)
+        logger.info("Voice Live connected (caller_id=%s)", self.caller_id)
 
         await self._send_json(session_config(self.caller_id))
         await self._send_json({"type": "response.create"})
@@ -197,7 +203,7 @@ class ACSMediaHandler:
                 if self.ws:
                     await self.ws.send(msg)
         except Exception:
-            logger.exception("[VoiceLiveACSHandler] Sender loop error")
+            logger.exception("Sender loop error")
 
     async def _receiver_loop(self):
         """Handles incoming events from the Voice Live WebSocket."""
@@ -208,42 +214,43 @@ class ACSMediaHandler:
 
                 match event_type:
                     case "session.created":
-                        session_id = event.get("session", {}).get("id")
-                        logger.info("[VoiceLiveACSHandler] Session ID: %s", session_id)
+                        pass
+
+                    case "session.updated":
+                        pass
 
                     case "input_audio_buffer.cleared":
-                        logger.info("Input Audio Buffer Cleared Message")
+                        pass
 
                     case "input_audio_buffer.speech_started":
-                        logger.info(
-                            "Voice activity detection started at %s ms",
-                            event.get("audio_start_ms"),
-                        )
                         await self.stop_audio()
 
                     case "input_audio_buffer.speech_stopped":
-                        logger.info("Speech stopped")
+                        self._user_speech_end_ts = time.monotonic()
 
                     case "conversation.item.input_audio_transcription.completed":
-                        transcript = event.get("transcript")
-                        logger.info("User: %s", transcript)
+                        logger.info("USER: %s", event.get("transcript"))
 
                     case "conversation.item.input_audio_transcription.failed":
-                        error_msg = event.get("error")
-                        logger.warning("Transcription Error: %s", error_msg)
+                        logger.error("Transcription failed: %s", event.get("error"))
+
+                    case "response.created" | "response.output_item.added" | "response.audio_transcript.delta":
+                        pass
 
                     case "response.done":
                         response = event.get("response", {})
-                        logger.info("Response Done: Id=%s", response.get("id"))
-                        if response.get("status_details"):
-                            logger.info(
-                                "Status Details: %s",
-                                json.dumps(response["status_details"], indent=2),
-                            )
+                        if response.get("status") != "completed":
+                            logger.error("Response error: %s", json.dumps(response.get("status_details", {})))
 
                     case "response.audio_transcript.done":
                         transcript = event.get("transcript")
-                        logger.info("AI: %s", transcript)
+                        # Latency: time from user's last word to agent's first word
+                        if self._user_speech_end_ts:
+                            latency_ms = int((time.monotonic() - self._user_speech_end_ts) * 1000)
+                            logger.info("AGENT: %s  [latency=%dms]", transcript, latency_ms)
+                            self._user_speech_end_ts = None
+                        else:
+                            logger.info("AGENT: %s", transcript)
                         await self.send_message(
                             json.dumps({"Kind": "Transcription", "Text": transcript})
                         )
@@ -275,21 +282,19 @@ class ACSMediaHandler:
                                 await self.voicelive_to_acs(delta)
 
                     case "error":
-                        logger.error("Voice Live Error: %s", event)
+                        logger.error("Voice Live error: %s", json.dumps(event))
 
                     case _:
-                        logger.debug(
-                            "[VoiceLiveACSHandler] Other event: %s", event_type
-                        )
+                        pass
         except Exception:
-            logger.exception("[VoiceLiveACSHandler] Receiver loop error")
+            logger.exception("Receiver loop error")
 
     async def send_message(self, message: Data):
         """Sends data back to client WebSocket."""
         try:
             await self.incoming_websocket.send(message)
         except Exception:
-            logger.exception("[VoiceLiveACSHandler] Failed to send message")
+            logger.exception("Failed to send message")
 
     async def voicelive_to_acs(self, base64_data):
         """Converts Voice Live audio delta to ACS audio message."""
@@ -301,7 +306,7 @@ class ACSMediaHandler:
             }
             await self.send_message(json.dumps(data))
         except Exception:
-            logger.exception("[VoiceLiveACSHandler] Error in voicelive_to_acs")
+            logger.exception("Error in voicelive_to_acs")
 
     async def stop_audio(self):
         """Sends a StopAudio signal to ACS."""
@@ -406,7 +411,7 @@ class ACSMediaHandler:
                 await self.send_message(json.dumps(data))
                 
         except Exception:
-            logger.exception("[VoiceLiveACSHandler] Error in _send_continuous_audio")
+            logger.exception("Error in _send_continuous_audio")
 
     async def acs_to_voicelive(self, stream_data):
         """Processes audio from ACS and forwards to Voice Live if not silent."""
@@ -430,7 +435,7 @@ class ACSMediaHandler:
                 if not audio_data.get("silent", True):
                     await self.audio_to_voicelive(audio_data.get("data"))
         except Exception:
-            logger.exception("[VoiceLiveACSHandler] Error processing ACS audio")
+            logger.exception("Error processing ACS audio")
 
     async def web_to_voicelive(self, audio_bytes):
         """Encodes raw audio bytes and sends to Voice Live API."""

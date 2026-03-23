@@ -164,3 +164,7 @@ cython_debug/
 # DevTunnels
 DevTunnels
 .azure
+.azureignore
+
+
+UserInfo/

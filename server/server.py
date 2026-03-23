@@ -27,6 +27,10 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s: %(message)s"
 )
 logger = logging.getLogger(__name__)
+logging.getLogger("websockets").setLevel(logging.WARNING)
+logging.getLogger("azure").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # Log ambient configuration on startup
 ambient_preset = app.config["AMBIENT_PRESET"]
@@ -58,7 +62,7 @@ async def acs_ws():
     """WebSocket endpoint for ACS to send audio to Voice Live."""
     logger = logging.getLogger("acs_ws")
     caller_id = websocket.args.get("callerId", "")
-    logger.info("Incoming ACS WebSocket connection, callerId=%s", caller_id)
+    logger.info("Connection initiated — ACS WebSocket, callerId=%s", caller_id)
     handler = ACSMediaHandler(app.config, caller_id=caller_id)
     await handler.init_incoming_websocket(websocket, is_raw_audio=False)
     asyncio.create_task(handler.connect())
@@ -67,9 +71,9 @@ async def acs_ws():
             msg = await websocket.receive()
             await handler.acs_to_voicelive(msg)
     except asyncio.CancelledError:
-        logger.info("ACS WebSocket cancelled")
+        pass
     except Exception:
-        logger.exception("ACS WebSocket connection closed")
+        logger.exception("ACS WebSocket error")
     finally:
         await handler.stop_audio_output()
 
@@ -79,7 +83,7 @@ async def web_ws():
     """WebSocket endpoint for web clients to send audio to Voice Live."""
     logger = logging.getLogger("web_ws")
     caller_id = websocket.args.get("callerId", "")
-    logger.info("Incoming Web WebSocket connection, callerId=%s", caller_id)
+    logger.info("Connection initiated — Web WebSocket, callerId=%s", caller_id)
     handler = ACSMediaHandler(app.config, caller_id=caller_id)
     await handler.init_incoming_websocket(websocket, is_raw_audio=True)
     asyncio.create_task(handler.connect())
@@ -88,9 +92,9 @@ async def web_ws():
             msg = await websocket.receive()
             await handler.web_to_voicelive(msg)
     except asyncio.CancelledError:
-        logger.info("Web WebSocket cancelled")
+        pass
     except Exception:
-        logger.exception("Web WebSocket connection closed")
+        logger.exception("Web WebSocket error")
     finally:
         await handler.stop_audio_output()
 
