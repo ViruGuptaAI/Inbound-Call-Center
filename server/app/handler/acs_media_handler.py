@@ -42,9 +42,8 @@ def load_user_info(caller_id: str) -> str:
     return ""
 
 
-def session_config(caller_id: str = ""):
-    """Returns the session configuration for Voice Live, enriched with caller info."""
-    instructions = SystemPrompt.Inbound_Credit_Cards_Bot
+def _enrich_instructions(instructions: str, caller_id: str) -> str:
+    """Append caller info from CRM to instructions, replace {Name} placeholder."""
     user_info = load_user_info(caller_id)
     if user_info:
         caller_name = ""
@@ -56,9 +55,7 @@ def session_config(caller_id: str = ""):
             instructions = instructions.replace("{Name}", caller_name)
         logger.info("Returning user: %s (caller_id=%s)", caller_name or "unknown", caller_id)
         instructions += (
-            "\n\n═══════════════════════════════════════════\n"
-            "CALLER INFORMATION (from CRM)\n"
-            "═══════════════════════════════════════════\n"
+            "\n\nCALLER INFORMATION (from CRM):\n"
             f"{user_info}\n"
             "Use this information to personalise the call. "
             "IMPORTANT: Greet the caller by their first name. "
@@ -67,6 +64,44 @@ def session_config(caller_id: str = ""):
         )
     else:
         logger.info("New user (caller_id=%s)", caller_id)
+    return instructions
+
+
+def detect_script_language(text: str) -> str:
+    """Detect language from Unicode script in transcript text.
+    Returns 'kn' for Kannada, 'hi' for Devanagari (Hindi default),
+    'mr' for Marathi (indistinguishable from Hindi by script alone — caller context needed),
+    or 'en' if no Indic script is found.
+    """
+    kannada = 0
+    devanagari = 0
+    total = 0
+    for ch in text:
+        cp = ord(ch)
+        if ch.isalpha():
+            total += 1
+            if 0x0C80 <= cp <= 0x0CFF:  # Kannada block
+                kannada += 1
+            elif 0x0900 <= cp <= 0x097F:  # Devanagari block
+                devanagari += 1
+    if total == 0:
+        return "en"
+    if kannada / total > 0.3:
+        return "kn"
+    if devanagari / total > 0.3:
+        return "hi"  # Could be Hindi or Marathi — both use Devanagari
+    return "en"
+
+
+def get_locale_instructions(lang: str, caller_id: str = "") -> str:
+    """Return the language-specific prompt enriched with caller info."""
+    prompt = SystemPrompt.LOCALE_PROMPTS.get(lang, SystemPrompt.PROMPT_EN)
+    return _enrich_instructions(prompt, caller_id)
+
+
+def session_config(caller_id: str = ""):
+    """Returns the initial session configuration (English greeting)."""
+    instructions = _enrich_instructions(SystemPrompt.PROMPT_EN, caller_id)
     return {
         "type": "session.update",
         "session": {
@@ -105,6 +140,7 @@ def session_config(caller_id: str = ""):
                 "name": "en-IN-Meera:DragonHDIndicLatestNeural",
                 "type": "azure-standard",
                 "temperature": 0.8,
+                "speaking_rate": 1.1,
             },
         },
     }
@@ -125,6 +161,8 @@ class ACSMediaHandler:
         self.incoming_websocket = None
         self.is_raw_audio = True
         self._user_speech_end_ts = None  # timestamp when user stops speaking
+        self._current_lang = "en"  # tracks the active prompt language
+        self._pending_lang_retry = False  # set when we need response.create after cancel completes
 
         # TTS output buffering for continuous ambient mixing
         self._tts_output_buffer = bytearray()
@@ -229,7 +267,41 @@ class ACSMediaHandler:
                         self._user_speech_end_ts = time.monotonic()
 
                     case "conversation.item.input_audio_transcription.completed":
-                        logger.info("USER: %s", event.get("transcript"))
+                        transcript = event.get("transcript", "")
+                        stt_language = event.get("language", "")
+                        detected_lang = detect_script_language(transcript)
+                        logger.info("USER [script=%s stt=%s]: %s", detected_lang, stt_language, transcript)
+                        logger.debug("STT event keys: %s", list(event.keys()))
+
+                        # Determine effective language: prefer STT language tag, fall back to script detection
+                        # STT returns "hi-IN", "en-IN", etc. — extract prefix
+                        effective_lang = detected_lang
+                        if stt_language:
+                            stt_prefix = stt_language.split("-")[0].lower()
+                            if stt_prefix in SystemPrompt.LOCALE_PROMPTS:
+                                effective_lang = stt_prefix
+
+                        # Switch prompt whenever user's language changes
+                        # To regional: any utterance with Indic script
+                        # Back to English: only if ≥5 English words (avoids false triggers from "okay", "yes", numbers)
+                        should_switch = False
+                        if effective_lang != self._current_lang and effective_lang in SystemPrompt.LOCALE_PROMPTS:
+                            if effective_lang == "en":
+                                word_count = len(transcript.strip().split())
+                                should_switch = word_count >= 5
+                            else:
+                                should_switch = True
+
+                        if should_switch:
+                            new_instructions = get_locale_instructions(effective_lang, self.caller_id)
+                            await self._send_json({"type": "response.cancel"})
+                            await self._send_json({
+                                "type": "session.update",
+                                "session": {"instructions": new_instructions}
+                            })
+                            self._pending_lang_retry = True
+                            logger.info("Switched prompt %s → %s (effective), awaiting cancel completion", self._current_lang, effective_lang)
+                            self._current_lang = effective_lang
 
                     case "conversation.item.input_audio_transcription.failed":
                         logger.error("Transcription failed: %s", event.get("error"))
@@ -241,6 +313,11 @@ class ACSMediaHandler:
                         response = event.get("response", {})
                         if response.get("status") != "completed":
                             logger.error("Response error: %s", json.dumps(response.get("status_details", {})))
+                        # After a cancelled response from language switch, re-trigger in new language
+                        if self._pending_lang_retry:
+                            self._pending_lang_retry = False
+                            await self._send_json({"type": "response.create"})
+                            logger.info("Re-triggered response in lang=%s after cancel completed", self._current_lang)
 
                     case "response.audio_transcript.done":
                         transcript = event.get("transcript")
