@@ -109,7 +109,7 @@ def session_config(caller_id: str = ""):
             "turn_detection": {
                 "type": "azure_semantic_vad_multilingual",
                 "threshold": 0.5,
-                "prefix_padding_ms": 500,
+                "prefix_padding_ms": 400,
                 "silence_duration_ms": 400,
                 "remove_filler_words": False,
                 "languages": ["en", "hi"],
@@ -136,11 +136,11 @@ def session_config(caller_id: str = ""):
             "input_audio_noise_reduction": {"type": "azure_deep_noise_suppression"},
             "input_audio_echo_cancellation": {"type": "server_echo_cancellation"},
             "voice": {
-                # "name": "en-US-Aria:DragonHDLatestNeural",
-                "name": "en-IN-Meera:DragonHDIndicLatestNeural",
+                "name": "en-IN-Meera2:DragonHDV2.3Neural",
+                # "name": "en-IN-Meera:DragonHDIndicLatestNeural",
                 "type": "azure-standard",
                 "temperature": 0.8,
-                "speaking_rate": 1.1,
+                "rate": "1.2",
             },
         },
     }
@@ -161,8 +161,8 @@ class ACSMediaHandler:
         self.incoming_websocket = None
         self.is_raw_audio = True
         self._user_speech_end_ts = None  # timestamp when user stops speaking
+        self._first_audio_latency_logged = False  # ensures we log latency only once per turn
         self._current_lang = "en"  # tracks the active prompt language
-        self._pending_lang_retry = False  # set when we need response.create after cancel completes
 
         # TTS output buffering for continuous ambient mixing
         self._tts_output_buffer = bytearray()
@@ -265,6 +265,7 @@ class ACSMediaHandler:
 
                     case "input_audio_buffer.speech_stopped":
                         self._user_speech_end_ts = time.monotonic()
+                        self._first_audio_latency_logged = False
 
                     case "conversation.item.input_audio_transcription.completed":
                         transcript = event.get("transcript", "")
@@ -294,13 +295,11 @@ class ACSMediaHandler:
 
                         if should_switch:
                             new_instructions = get_locale_instructions(effective_lang, self.caller_id)
-                            await self._send_json({"type": "response.cancel"})
                             await self._send_json({
                                 "type": "session.update",
                                 "session": {"instructions": new_instructions}
                             })
-                            self._pending_lang_retry = True
-                            logger.info("Switched prompt %s → %s (effective), awaiting cancel completion", self._current_lang, effective_lang)
+                            logger.info("Switched prompt %s → %s (effective), active for next turn", self._current_lang, effective_lang)
                             self._current_lang = effective_lang
 
                     case "conversation.item.input_audio_transcription.failed":
@@ -313,26 +312,20 @@ class ACSMediaHandler:
                         response = event.get("response", {})
                         if response.get("status") != "completed":
                             logger.error("Response error: %s", json.dumps(response.get("status_details", {})))
-                        # After a cancelled response from language switch, re-trigger in new language
-                        if self._pending_lang_retry:
-                            self._pending_lang_retry = False
-                            await self._send_json({"type": "response.create"})
-                            logger.info("Re-triggered response in lang=%s after cancel completed", self._current_lang)
 
                     case "response.audio_transcript.done":
                         transcript = event.get("transcript")
-                        # Latency: time from user's last word to agent's first word
-                        if self._user_speech_end_ts:
-                            latency_ms = int((time.monotonic() - self._user_speech_end_ts) * 1000)
-                            logger.info("AGENT: %s  [latency=%dms]", transcript, latency_ms)
-                            self._user_speech_end_ts = None
-                        else:
-                            logger.info("AGENT: %s", transcript)
+                        logger.info("AGENT: %s", transcript)
                         await self.send_message(
                             json.dumps({"Kind": "Transcription", "Text": transcript})
                         )
 
                     case "response.audio.delta":
+                        # Latency: time from user's last word to first audio byte
+                        if self._user_speech_end_ts and not self._first_audio_latency_logged:
+                            latency_ms = int((time.monotonic() - self._user_speech_end_ts) * 1000)
+                            logger.info("Time to first audio byte: [latency=%dms]", latency_ms)
+                            self._first_audio_latency_logged = True
                         delta = event.get("delta")
                         audio_bytes = base64.b64decode(delta)
                         

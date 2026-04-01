@@ -44,7 +44,7 @@ resource containerAppEnv 'Microsoft.App/managedEnvironments@2023-05-01' = {
   }
 }
 
-resource containerApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
+resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: containerAppName
   location: location
   tags: union(tags, { 'azd-service-name': 'app' })
