@@ -100,29 +100,39 @@ def get_locale_instructions(lang: str, caller_id: str = "") -> str:
 
 
 def session_config(caller_id: str = ""):
-    """Returns the initial session configuration (English greeting)."""
+    """Returns the initial session configuration (English greeting).
+
+    Voice Live API reference: https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-api-reference-2025-10-01
+    """
     instructions = _enrich_instructions(SystemPrompt.PROMPT_EN, caller_id)
     return {
         "type": "session.update",
         "session": {
-            "instructions": instructions,
+            "instructions": instructions,  # System prompt guiding agent behaviour
+            # "input_audio_format": "pcm16",       # Audio encoding from client (pcm16 | g711_ulaw | g711_alaw). Default: pcm16
+            # "input_audio_sampling_rate": 24000,   # Input sample rate in Hz (16000 or 24000). Default: 24000
+            # "output_audio_format": "pcm16",       # Audio encoding sent back to client. Also supports pcm16_8000hz, pcm16_16000hz
             "turn_detection": {
-                "type": "azure_semantic_vad_multilingual",
-                "threshold": 0.5,
-                "prefix_padding_ms": 400,
-                "silence_duration_ms": 400,
-                "remove_filler_words": False,
-                "languages": ["en", "hi"],
-                "end_of_utterance_detection": {
-                    "model": "semantic_detection_v1_multilingual",
-                    "threshold": 0.1,
-                    "timeout": 0.5,
+                "type": "azure_semantic_vad_multilingual",  # VAD type: server_vad | semantic_vad | azure_semantic_vad | azure_semantic_vad_multilingual
+                "threshold": 0.6,              # Speech detection sensitivity (0.0–1.0). Lower = more sensitive. Default: 0.5
+                "prefix_padding_ms": 400,      # Audio (ms) to keep before detected speech start, prevents word clipping. Default: 300
+                "silence_duration_ms": 400,    # Silence (ms) before end-of-turn is triggered. Lower = faster response. Default: 500
+                "speech_duration_ms": 120,     # Min speech (ms) before VAD fires, filters coughs/clicks. Default: 80 (azure_semantic_vad*)
+                "remove_filler_words": True,   # Drop "umm", "uh", "hmm" etc. to reduce false barge-ins. Default: False
+                "languages": ["en", "hi"],     # Languages for multilingual VAD. Supported: en, es, fr, it, de, ja, pt, zh, ko, hi
+                "create_response": True,       # Auto-generate a model response when speech ends. Default: True
+                "interrupt_response": True,    # Allow user speech to interrupt (barge-in) the agent's response. Default: True
+                "auto_truncate": True,         # On interruption, trim agent's context to what user actually heard. Default: False
+                "end_of_utterance_detection": {  # Semantic EOU — reduces premature end-of-turn without adding latency
+                    "model": "semantic_detection_v1_multilingual",  # EOU model: semantic_detection_v1 (EN) | semantic_detection_v1_multilingual
+                    "threshold_level": "low",  # How confident EOU must be: low | medium | high | default. Lower = waits longer for user
+                    "timeout_ms": 500,         # Max wait (ms) for more speech before forcing end-of-turn. Default: 1000
                 },
             },
-            "input_audio_transcription": {
-                "model": "azure-speech",
-                "language": "hi-IN,en-IN,kn-IN,mr-IN",
-                "phrase_list": [
+            "input_audio_transcription": {  # Async STT running alongside audio — transcript ≠ what model hears
+                "model": "azure-speech",    # Transcription engine: azure-speech | whisper-1 | gpt-4o-transcribe | gpt-4o-mini-transcribe
+                "language": "hi-IN,en-IN,kn-IN,mr-IN",  # BCP-47 locales for recognition (comma-separated for multi-language)
+                "phrase_list": [            # Bias words to improve recognition of domain-specific terms
                     "Guptaji", "गुप्ताजी", "Kavya", "Sanjana","काव्या",
                     "credit card", "debit", "EMI", "CVV", "OTP",
                     "statement", "due date", "minimum due", "outstanding",
@@ -133,15 +143,17 @@ def session_config(caller_id: str = ""):
                     "credit limit", "waiver", "RBI",
                 ],
             },
-            "input_audio_noise_reduction": {"type": "azure_deep_noise_suppression"},
-            "input_audio_echo_cancellation": {"type": "server_echo_cancellation"},
+            "input_audio_noise_reduction": {"type": "azure_deep_noise_suppression"},  # Suppress background noise before VAD & model
+            "input_audio_echo_cancellation": {"type": "server_echo_cancellation"},    # Remove agent's own voice from mic input (no client AEC needed)
             "voice": {
-                "name": "en-IN-Meera2:DragonHDV2.3Neural",
+                "name": "en-IN-Meera2:DragonHDV2.3Neural",  # Azure HD voice name. See: https://learn.microsoft.com/azure/ai-services/speech-service/language-support
                 # "name": "en-IN-Meera:DragonHDIndicLatestNeural",
-                "type": "azure-standard",
-                "temperature": 0.8,
-                "rate": "1.2",
+                "type": "azure-standard",   # Voice type: openai | azure-standard | azure-custom | azure-personal
+                "temperature": 0.8,         # Voice variability (0.0–1.0). Higher = more expressive intonation. HD voices only
+                "rate": "1.1",              # Speaking speed (0.5–1.5). Higher = faster speech
             },
+            "temperature": 0.8,            # Model sampling temperature (0.6–1.2). Higher = more creative responses. Default: 0.8
+            "max_response_output_tokens": "750",  # Max tokens per response (1–4096 or "inf"). Caps agent verbosity per turn
         },
     }
 
