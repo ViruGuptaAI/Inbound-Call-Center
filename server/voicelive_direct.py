@@ -42,10 +42,10 @@ FOUNDRY_RESOURCE_OVERRIDE = os.getenv("FOUNDRY_RESOURCE_OVERRIDE", "")
 USER_INFO_DIR = Path(__file__).resolve().parent / "UserInfo"
 
 SYSTEM_PROMPT = """
-You are Archana — a female Credit Cards Support Voice Agent at Guptaji Bank handling inbound calls.
+You are Archana — a female Credit Cards Support Voice Agent at Contoso Bank handling inbound calls.
 Respond entirely in English. Use natural, professional English.
 
-PERSONA: Name: Archana | Bank: Guptaji Bank, Credit Cards Department
+PERSONA: Name: Archana | Bank: Contoso Bank, Credit Cards Department
 Tone: Calm, confident, empathetic, professional, warm. Never sound scripted or robotic.
 Never volunteer that you are an AI unless explicitly asked.
 Keep responses short, clear, and conversational — no monologues.
@@ -61,10 +61,10 @@ NEVER ask for full card number, CVV, OTP, PIN, or expiry date.
 Only after both pieces are provided AND they match the CRM records, proceed.
 
 GREETING:
-If caller name is known: "Hello {Name}! Welcome to Guptaji Bank Credit Cards. I'm Archana — how can I help you today?"
-If unknown: "Hello! Welcome to Guptaji Bank Credit Cards. I'm Archana. How can I assist you today?"
+If caller name is known: "Hello {Name}! Welcome to Contoso Bank Credit Cards. I'm Archana — how can I help you today?"
+If unknown: "Hello! Welcome to Contoso Bank Credit Cards. I'm Archana. How can I assist you today?"
 
-CLOSING: "Is there anything else I can help with? ... Thank you for calling Guptaji Bank. Have a great day!"
+CLOSING: "Is there anything else I can help with? ... Thank you for calling Contoso Bank. Have a great day!"
 """
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -180,7 +180,7 @@ def build_session_config(caller_id: str = "") -> dict:
                 #         | gpt-4o-mini-transcribe
                 "language": "hi-IN,en-IN,kn-IN,mr-IN",  # BCP-47 locales (comma separated)
                 "phrase_list": [
-                    "Guptaji", "गुप्ताजी", "Kavya", "Sanjana", "Archana", "काव्या",
+                    "Contoso", "कॉन्टोसो", "Kavya", "Sanjana", "Archana", "काव्या",
                     "credit card", "debit", "EMI", "CVV", "OTP",
                     "statement", "due date", "minimum due", "outstanding",
                     "late payment fee", "annual fee", "finance charge",
@@ -199,8 +199,7 @@ def build_session_config(caller_id: str = "") -> dict:
 
             # ── TTS voice ───────────────────────────────────────────────
             "voice": {
-                "name": "en-IN-Meera2:DragonHDV2.3Neural",
-                # See: https://learn.microsoft.com/azure/ai-services/speech-service/language-support
+                "name": "en-IN-Diya:DragonHDLatestNeural", # Azure TTS voice name
                 "type": "azure-standard",
                 # Types: openai | azure-standard | azure-custom | azure-personal
                 "temperature": 0.8,   # voice expressiveness (0–1, HD voices only)
@@ -208,7 +207,7 @@ def build_session_config(caller_id: str = "") -> dict:
             },
 
             # ── Model behaviour ──────────────────────────────────────────
-            "temperature": 0.3,                    # GPT sampling temperature (0.6–1.2)
+            "temperature": 0.1,                    # GPT Model sampling temperature (0 to 1)
             "max_response_output_tokens": "750",   # caps verbosity per turn (1–4096 or "inf")
         },
     }
@@ -335,9 +334,9 @@ class VoiceLiveSession:
             session.created / session.updated       – lifecycle, logged
             input_audio_buffer.speech_started        – user barge-in → stop playback
             input_audio_buffer.speech_stopped         – mark for latency measurement
-            conversation.item.input_audio_transcription.completed – user STT
+            conversation.item.input_audio_transcription.completed – user transcription
             response.audio.delta                     – TTS audio chunk (base64 PCM16)
-            response.audio_transcript.done           – agent transcript text
+            response.audio_transcript.done           – agent transcription
             response.done                            – turn complete
             error                                    – logged
         """
@@ -364,7 +363,7 @@ class VoiceLiveSession:
                             json.dumps({"Kind": "StopAudio"})
                         )
 
-                    case "input_audio_buffer.speech_stopped":
+                    case "input_audio_buffer.speech_stopped": #user has stopped speaking
                         self._user_speech_end_ts = time.monotonic()
                         self._first_audio_latency_logged = False
 

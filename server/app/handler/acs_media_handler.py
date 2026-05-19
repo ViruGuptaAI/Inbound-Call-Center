@@ -123,17 +123,17 @@ def session_config(caller_id: str = ""):
                 "create_response": True,       # Auto-generate a model response when speech ends. Default: True
                 "interrupt_response": True,    # Allow user speech to interrupt (barge-in) the agent's response. Default: True
                 "auto_truncate": True,         # On interruption, trim agent's context to what user actually heard. Default: False
-                "end_of_utterance_detection": {  # Semantic EOU — reduces premature end-of-turn without adding latency
-                    "model": "semantic_detection_v1_multilingual",  # EOU model: semantic_detection_v1 (EN) | semantic_detection_v1_multilingual
-                    "threshold_level": "low",  # How confident EOU must be: low | medium | high | default. Lower = waits longer for user
-                    "timeout_ms": 500,         # Max wait (ms) for more speech before forcing end-of-turn. Default: 1000
-                },
+                # "end_of_utterance_detection": {  # Semantic EOU — reduces premature end-of-turn without adding latency
+                #     "model": "semantic_detection_v1",  # EOU model: semantic_detection_v1 (EN) | semantic_detection_v1_multilingual
+                #     "threshold_level": "medium",  # How confident EOU must be: low | medium | high | default. Lower = waits longer for user
+                #     "timeout_ms": 400,         # Max wait (ms) for more speech before forcing end-of-turn. Default: 1000
+                # },
             },
             "input_audio_transcription": {  # Async STT running alongside audio — transcript ≠ what model hears
                 "model": "azure-speech",    # Transcription engine: azure-speech | whisper-1 | gpt-4o-transcribe | gpt-4o-mini-transcribe
                 "language": "hi-IN,en-IN,kn-IN,mr-IN",  # BCP-47 locales for recognition (comma-separated for multi-language)
                 "phrase_list": [            # Bias words to improve recognition of domain-specific terms
-                    "Guptaji", "गुप्ताजी", "Kavya", "Sanjana","काव्या",
+                    "Guptaji", "contoso","गुप्ताजी", "Kavya", "Sanjana","काव्या",
                     "credit card", "debit", "EMI", "CVV", "OTP",
                     "statement", "due date", "minimum due", "outstanding",
                     "late payment fee", "annual fee", "finance charge",
@@ -146,13 +146,13 @@ def session_config(caller_id: str = ""):
             "input_audio_noise_reduction": {"type": "azure_deep_noise_suppression"},  # Suppress background noise before VAD & model
             "input_audio_echo_cancellation": {"type": "server_echo_cancellation"},    # Remove agent's own voice from mic input (no client AEC needed)
             "voice": {
-                "name": "en-IN-Meera2:DragonHDV2.3Neural",  # Azure HD voice name. See: https://learn.microsoft.com/azure/ai-services/speech-service/language-support
-                # "name": "en-IN-Meera:DragonHDIndicLatestNeural",
+                # "name": "en-IN-Meera2:DragonHDV2.3Neural",  # Azure HD voice name. See: https://learn.microsoft.com/azure/ai-services/speech-service/language-support
+                "name": "en-IN-Diya:DragonHDLatestNeural",
                 "type": "azure-standard",   # Voice type: openai | azure-standard | azure-custom | azure-personal
-                "temperature": 0.8,         # Voice variability (0.0–1.0). Higher = more expressive intonation. HD voices only
+                "temperature": 0.7,         # Voice variability (0.0–1.0). Higher = more expressive intonation. HD voices only
                 "rate": "1.1",              # Speaking speed (0.5–1.5). Higher = faster speech
             },
-            "temperature": 0.8,            # Model sampling temperature (0.6–1.2). Higher = more creative responses. Default: 0.8
+            "temperature": 0.1,            # Model sampling temperature (0.6–1.2). Higher = more creative responses. Default: 0.8
             "max_response_output_tokens": "750",  # Max tokens per response (1–4096 or "inf"). Caps agent verbosity per turn
         },
     }
@@ -173,6 +173,8 @@ class ACSMediaHandler:
         self.incoming_websocket = None
         self.is_raw_audio = True
         self._user_speech_end_ts = None  # timestamp when user stops speaking
+        self._transcription_done_ts = None  # timestamp when STT completes
+        self._response_created_ts = None  # timestamp when Voice Live starts generating a response
         self._first_audio_latency_logged = False  # ensures we log latency only once per turn
         self._current_lang = "en"  # tracks the active prompt language
 
@@ -280,6 +282,7 @@ class ACSMediaHandler:
                         self._first_audio_latency_logged = False
 
                     case "conversation.item.input_audio_transcription.completed":
+                        self._transcription_done_ts = time.monotonic()
                         transcript = event.get("transcript", "")
                         stt_language = event.get("language", "")
                         detected_lang = detect_script_language(transcript)
@@ -317,11 +320,16 @@ class ACSMediaHandler:
                     case "conversation.item.input_audio_transcription.failed":
                         logger.error("Transcription failed: %s", event.get("error"))
 
-                    case "response.created" | "response.output_item.added" | "response.audio_transcript.delta":
+                    case "response.created":
+                        self._response_created_ts = time.monotonic()
+
+                    case "response.output_item.added" | "response.audio_transcript.delta":
                         pass
 
                     case "response.done":
                         response = event.get("response", {})
+                        # Log full response.done payload to discover available metrics
+                        logger.info("response.done payload: %s", json.dumps(response, indent=2, default=str))
                         if response.get("status") != "completed":
                             logger.error("Response error: %s", json.dumps(response.get("status_details", {})))
 
@@ -333,10 +341,20 @@ class ACSMediaHandler:
                         )
 
                     case "response.audio.delta":
-                        # Latency: time from user's last word to first audio byte
+                        # Latency breakdown:
+                        #   server_processing = speech_stopped → response.created (EOU + model intake + cold start)
+                        #   first_audio       = response.created → first audio delta (LLM generation + TTS, inseparable)
+                        #   stt (informational) = speech_stopped → transcription.completed (parallel async pipeline, does NOT gate response)
                         if self._user_speech_end_ts and not self._first_audio_latency_logged:
-                            latency_ms = int((time.monotonic() - self._user_speech_end_ts) * 1000)
-                            logger.info("Time to first audio byte: [latency=%dms]", latency_ms)
+                            now = time.monotonic()
+                            e2e_ms = int((now - self._user_speech_end_ts) * 1000)
+                            server_ms = int(((self._response_created_ts or now) - self._user_speech_end_ts) * 1000)
+                            first_audio_ms = int((now - (self._response_created_ts or now)) * 1000)
+                            stt_ms = int(((self._transcription_done_ts or now) - self._user_speech_end_ts) * 1000) if self._transcription_done_ts else -1
+                            logger.info(
+                                "Latency breakdown: [e2e=%dms, server_processing=%dms, first_audio=%dms, stt_async=%dms]",
+                                e2e_ms, server_ms, first_audio_ms, stt_ms
+                            )
                             self._first_audio_latency_logged = True
                         delta = event.get("delta")
                         audio_bytes = base64.b64decode(delta)

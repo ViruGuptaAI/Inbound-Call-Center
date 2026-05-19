@@ -7,7 +7,7 @@ Loyalty Tier: Platinum Elite
 CREDIT CARDS
 ═══════════════════════════════════════════
 
-1. Guptaji Platinum Rewards Card
+1. Contoso Platinum Rewards Card
    Card Number (last 4): 4421
    Credit Limit: ₹5,00,000
    Available Limit: ₹3,25,000
@@ -20,7 +20,7 @@ CREDIT CARDS
    Annual Fee: ₹2,500 (charged 01-Jan-2026, waived via spend target)
    Card Status: Active
 
-2. Guptaji ShopSmart Cashback Card
+2. Contoso ShopSmart Cashback Card
    Card Number (last 4): 9173
    Credit Limit: ₹2,00,000
    Available Limit: ₹1,62,500
@@ -33,7 +33,7 @@ CREDIT CARDS
    Annual Fee: ₹500 (charged 15-Jul-2025)
    Card Status: Active
 
-3. Guptaji Voyage Travel Card
+3. Contoso Voyage Travel Card
    Card Number (last 4): 6658
    Credit Limit: ₹8,00,000
    Available Limit: ₹7,45,000
