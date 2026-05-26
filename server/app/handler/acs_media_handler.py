@@ -150,10 +150,20 @@ def session_config(caller_id: str = ""):
                 "name": "en-IN-Diya:DragonHDLatestNeural",
                 "type": "azure-standard",   # Voice type: openai | azure-standard | azure-custom | azure-personal
                 "temperature": 0.7,         # Voice variability (0.0–1.0). Higher = more expressive intonation. HD voices only
-                "rate": "1.1",              # Speaking speed (0.5–1.5). Higher = faster speech
+                "rate": "1",              # Speaking speed (0.5–1.5). Higher = faster speech
             },
             "temperature": 0.1,            # Model sampling temperature (0.6–1.2). Higher = more creative responses. Default: 0.8
             "max_response_output_tokens": "750",  # Max tokens per response (1–4096 or "inf"). Caps agent verbosity per turn
+            "interim_response": {               # Bridge silence during tool calls or high-latency responses
+                "type": "static_interim_response",  # static_interim_response | llm_interim_response
+                "triggers": ["tool", "latency"],    # Fire on tool calls and/or latency threshold
+                "latency_threshold_ms": 1500,        # ms before latency trigger fires. Default: 2000
+                "texts": [                           # Random selection from this list
+                    "Let me look that up for you.",
+                    "One moment while I check on that.",
+                    "Just a second, I'm working on it.",
+                ],
+            },
         },
     }
 
@@ -202,7 +212,7 @@ class ACSMediaHandler:
         """Connects to Azure Voice Live API via WebSocket."""
         endpoint = self.endpoint.rstrip("/")
         model = self.model.strip()
-        url = f"{endpoint}/voice-live/realtime?api-version=2025-05-01-preview&model={model}"
+        url = f"{endpoint}/voice-live/realtime?api-version=2026-01-01-preview&model={model}"
         url = url.replace("https://", "wss://")
 
         headers = {"x-ms-client-request-id": self._generate_guid()}
@@ -294,7 +304,7 @@ class ACSMediaHandler:
                         effective_lang = detected_lang
                         if stt_language:
                             stt_prefix = stt_language.split("-")[0].lower()
-                            if stt_prefix in SystemPrompt.LOCALE_PROMPTS:
+                            if stt_prefix in SystemPrompt.prompt_cc:
                                 effective_lang = stt_prefix
 
                         # Switch prompt whenever user's language changes

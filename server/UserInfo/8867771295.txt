@@ -19,6 +19,7 @@ CREDIT CARDS
    Auto-Pay: Not Enabled
    Annual Fee: ₹500 (charged 01-Aug-2025)
    Card Status: Active
+   Credit Limit Upgrade Eligibility: No — 2 late payments in last 6 months
 
 2. Contoso EasyBuy EMI Card
    Card Number (last 4): 3301
@@ -32,6 +33,7 @@ CREDIT CARDS
    Auto-Pay: Enabled (EMI amount only)
    Annual Fee: Nil (lifetime free)
    Card Status: Active
+   Credit Limit Upgrade Eligibility: No — active EMIs pending, clear EMIs first
 
 3. Contoso Voyage Travel Card
    Card Number (last 4): 5590
@@ -46,6 +48,7 @@ CREDIT CARDS
    Auto-Pay: Not Enabled
    Annual Fee: ₹5,000 (charged 01-Sep-2025, not waivable)
    Card Status: Active
+   Credit Limit Upgrade Eligibility: Yes, up to ₹5,00,000
 
 ═══════════════════════════════════════════
 FEES & CHARGES SUMMARY (FY 2025-26)

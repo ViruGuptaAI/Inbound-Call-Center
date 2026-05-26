@@ -19,6 +19,7 @@ CREDIT CARDS
    Auto-Pay: Enabled (minimum due)
    Annual Fee: ₹2,500 (charged 01-Jan-2026, waived via spend target)
    Card Status: Active
+   Credit limit Upgradation Eligibility: no because of insufficient salary
 
 2. Contoso ShopSmart Cashback Card
    Card Number (last 4): 9173
@@ -32,6 +33,7 @@ CREDIT CARDS
    Auto-Pay: Not Enabled
    Annual Fee: ₹500 (charged 15-Jul-2025)
    Card Status: Active
+   Credit Limit Upgrade Eligibility: No — late payment recorded in last 6 months
 
 3. Contoso Voyage Travel Card
    Card Number (last 4): 6658
@@ -46,6 +48,7 @@ CREDIT CARDS
    Auto-Pay: Enabled (full amount)
    Annual Fee: ₹5,000 (charged 01-Apr-2025, not waivable)
    Card Status: Active
+   Credit Limit Upgrade Eligibility: Yes, up to ₹10,00,000
 
 ═══════════════════════════════════════════
 FEES & CHARGES SUMMARY (FY 2025-26)
@@ -63,16 +66,16 @@ RECENT TRANSACTIONS
 ═══════════════════════════════════════════
 
 Platinum Rewards (4421):
- 1. 22-Mar-2026 | Amazon.in            | ₹4,299  | EMI (3 months)
- 2. 15-Mar-2026 | Reliance Fresh       | ₹3,175  | 64 Reward Pts
- 3. 10-Mar-2026 | BESCOM Electricity   | ₹2,840  | Auto-pay utility
+ 1. 22-Mar-2026  Amazon.in             ₹4,299   EMI (3 months)
+ 2. 15-Mar-2026  Reliance Fresh        ₹3,175   64 Reward Pts
+ 3. 10-Mar-2026  BESCOM Electricity    ₹2,840   Auto-pay utility
 
 ShopSmart Cashback (9173):
- 1. 20-Mar-2026 | Swiggy               | ₹862    | Cashback ₹43
- 2. 12-Mar-2026 | Flipkart             | ₹11,999 | Cashback ₹600
- 3. 03-Mar-2026 | BigBasket            | ₹2,430  | Cashback ₹122
+ 1. 20-Mar-2026  Swiggy                ₹862     Cashback ₹43
+ 2. 12-Mar-2026  Flipkart              ₹11,999  Cashback ₹600
+ 3. 03-Mar-2026  BigBasket             ₹2,430   Cashback ₹122
 
 Voyage Travel (6658):
- 1. 18-Mar-2026 | MakeMyTrip Flights   | ₹18,450 | 1,845 Air Miles
- 2. 08-Mar-2026 | Taj Hotel Bangalore  | ₹12,500 | 1,250 Air Miles
- 3. 01-Mar-2026 | Uber                 | ₹745    | 75 Air Miles
+ 1. 18-Mar-2026  MakeMyTrip Flights    ₹18,450  1,845 Air Miles
+ 2. 08-Mar-2026  Taj Hotel Bangalore   ₹12,500  1,250 Air Miles
+ 3. 01-Mar-2026  Uber                  ₹745     75 Air Miles
