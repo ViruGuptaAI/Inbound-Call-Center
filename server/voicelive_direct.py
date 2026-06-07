@@ -501,8 +501,26 @@ class VoiceLiveSession:
         self.caller_id = caller_id         # Phone number entered by the user (used for CRM lookup)
         self.vl_ws = None                  # The WebSocket connection TO Azure Voice Live API (set later in start())
         self._send_queue: asyncio.Queue = asyncio.Queue()  # Outbox: audio chunks wait here before being sent to Voice Live
-        self._user_speech_end_ts = None    # Timestamp when user stopped talking (used to measure response latency)
-        self._first_audio_latency_logged = False  # Flag so we only log latency once per turn (first audio byte)
+        self._user_speech_end_ts = None              # Timestamp when user stopped talking (for latency measurement)
+        self._first_audio_latency_logged = False       # Flag so we only log latency once per turn (first audio byte)
+        self._ts_response_created = None               # Timestamp when response.created fires (STT done, LLM starting)
+        self._ts_first_transcript_delta = None         # Timestamp of first audio_transcript.delta (LLM first token)
+        self._response_audio_bytes = 0                 # Accumulator for agent audio bytes per response (for speech duration calc)
+        self._response_interrupted = False             # Flag: was the current response interrupted by barge-in?
+        self._user_speech_start_ms = 0                 # VAD audio_start_ms from speech_started event
+        self._turn_count = 0                           # Number of user turns (speech_started events)
+        self._bargein_count = 0                        # Number of barge-ins (conversation.item.truncated events)
+        self._preemption_count = 0                     # Number of pre-emptions (cancelled before agent spoke)
+        self._agent_spoke_count = 0                    # Number of times agent produced audio (response.audio.done events)
+        self._response_turn = 0                        # Turn number that the current response is replying to
+        self._total_user_speech_s = 0.0                # Cumulative user speech duration in seconds
+        self._total_agent_speech_s = 0.0               # Cumulative agent speech duration in seconds
+        self._total_input_tokens = 0                   # Cumulative LLM input tokens across all responses
+        self._total_output_tokens = 0                  # Cumulative LLM output tokens across all responses
+        self._total_input_audio_tokens = 0             # Cumulative input audio tokens (STT side)
+        self._total_output_audio_tokens = 0            # Cumulative output audio tokens (TTS side)
+        self._total_input_text_tokens = 0              # Cumulative input LLM text tokens
+        self._total_output_text_tokens = 0             # Cumulative output LLM text tokens
 
     # ── 1. Connect to Voice Live ─────────────────────────────────────────
 
@@ -537,7 +555,8 @@ class VoiceLiveSession:
         # Open WebSocket
         logger.info("Connecting to: %s", url)
         self.vl_ws = await ws_connect(
-            url, additional_headers=headers, family=socket.AF_INET
+            url, additional_headers=headers, family=socket.AF_INET,
+            ping_interval=30, ping_timeout=60,
         )
         t_ws = time.monotonic()
         logger.info(
@@ -621,68 +640,94 @@ class VoiceLiveSession:
                 match event_type:
                     # ── Lifecycle ────────────────────────────────────────
                     case "session.created":
-                        logger.info("Session created: %s", json.dumps(event, indent=2))
+                        logger.info("Session created (id=%s)", event.get("session", {}).get("id", ""))
 
                     case "session.updated":
-                        logger.info("Session updated: %s", json.dumps(event, indent=2))
+                        logger.info("Session configured")
 
                     case "input_audio_buffer.cleared":
                         pass
 
                     # ── User speech events ───────────────────────────────
                     case "input_audio_buffer.speech_started":
-                        # Barge-in: tell browser to stop playing TTS
+                        self._turn_count += 1
+                        self._user_speech_start_ms = event.get("audio_start_ms", 0)
+                        logger.info("[Turn %d] User started speaking", self._turn_count)
                         await self._send_to_browser(
                             json.dumps({"Kind": "StopAudio"})
                         )
 
-                    case "input_audio_buffer.speech_stopped": #user has stopped speaking
+                    case "input_audio_buffer.speech_stopped":
+                        audio_end_ms = event.get("audio_end_ms", 0)
+                        speech_s = max(0, (audio_end_ms - self._user_speech_start_ms - 800)) / 1000
+                        self._total_user_speech_s += speech_s
+                        logger.info("[Turn %d] User stopped speaking (%.1fs)", self._turn_count, speech_s)
                         self._user_speech_end_ts = time.monotonic()
                         self._first_audio_latency_logged = False
 
                     # ── User transcription ───────────────────────────────
                     case "conversation.item.input_audio_transcription.completed":
                         transcript = event.get("transcript", "")
-                        stt_lang = event.get("language", "")
-                        logger.info("USER [lang=%s]: %s", stt_lang, transcript)
+                        stt_done_ms = int((time.monotonic() - self._user_speech_end_ts) * 1000) if self._user_speech_end_ts else 0
+                        logger.info('[Turn %d] User: "%s" (STT done at +%dms)', self._turn_count, transcript, stt_done_ms)
 
                     case "conversation.item.input_audio_transcription.failed":
                         logger.error("Transcription failed: %s", event.get("error"))
 
                     # ── Agent response audio ─────────────────────────────
                     case "response.audio.delta":
-                        # Measure time-to-first-audio-byte
-                        if (
-                            self._user_speech_end_ts
-                            and not self._first_audio_latency_logged
-                        ):
-                            latency_ms = int(
-                                (time.monotonic() - self._user_speech_end_ts) * 1000
-                            )
-                            logger.info(
-                                "Time to first audio byte: [latency=%dms]", latency_ms
-                            )
+                        if not self._first_audio_latency_logged:
+                            label = f"[Turn {self._response_turn}]" if self._response_turn else "[Greeting]"
+                            now = time.monotonic()
+                            if self._user_speech_end_ts:
+                                total_ms = int((now - self._user_speech_end_ts) * 1000)
+                                # STT + LLM TTFT combined (can't separate — no event between them)
+                                stt_llm_ms = int((self._ts_first_transcript_delta - self._user_speech_end_ts) * 1000) if self._ts_first_transcript_delta else total_ms
+                                # TTS: first LLM text token → first audio byte
+                                tts_ms = int((now - self._ts_first_transcript_delta) * 1000) if self._ts_first_transcript_delta else 0
+                                logger.info(
+                                    "%s Agent started speaking (total: %dms | STT+LLM: %dms, TTS: %dms)",
+                                    label, total_ms, stt_llm_ms, tts_ms,
+                                )
+                            else:
+                                logger.info("%s Agent started speaking", label)
                             self._first_audio_latency_logged = True
 
-                        # Decode and send raw PCM16 bytes to browser
                         delta = event.get("delta", "")
                         audio_bytes = base64.b64decode(delta)
+                        self._response_audio_bytes += len(audio_bytes)
                         await self._send_to_browser(audio_bytes)
 
                     # ── Agent transcript ─────────────────────────────────
+                    case "response.audio.done":
+                        self._agent_spoke_count += 1
+                        if self._response_audio_bytes > 0 and not self._response_interrupted:
+                            speech_s = self._response_audio_bytes / (2 * 24000)
+                            self._total_agent_speech_s += speech_s
+                            label = f"[Turn {self._response_turn}]" if self._response_turn else "[Greeting]"
+                            logger.info("%s Agent finished speaking (%.1fs)", label, speech_s)
+
                     case "response.audio_transcript.done":
                         transcript = event.get("transcript", "")
-                        logger.info("AGENT: %s", transcript)
+                        label = f"[Turn {self._response_turn}]" if self._response_turn else "[Greeting]"
+                        logger.info('%s Agent: "%s"', label, transcript)
                         await self._send_to_browser(
                             json.dumps({"Kind": "Transcription", "Text": transcript})
                         )
 
                     # ── Truncation (auto_truncate) ───────────────────────
                     case "conversation.item.truncated":
+                        self._bargein_count += 1
+                        audio_end_ms = event.get("audio_end_ms", 0)
+                        heard_s = audio_end_ms / 1000
+                        sent_s = self._response_audio_bytes / (2 * 24000)
+                        missed_s = max(0, sent_s - heard_s)
+                        self._total_agent_speech_s += heard_s
                         logger.info(
-                            "Response truncated (user interrupted). item_id=%s, content_index=%s",
-                            event.get("item_id"), event.get("content_index"),
+                            "[Turn %d] BARGE-IN: Agent interrupted (heard: %.1fs, sent: %.1fs, missed: %.1fs)",
+                            self._response_turn, heard_s, sent_s, missed_s,
                         )
+                        self._response_interrupted = True
 
                     # ── Text modality events (diagnostic) ────────────────
                     case "response.text.delta":
@@ -696,13 +741,26 @@ class VoiceLiveSession:
                         )
 
                     # ── Intermediate events (ignored) ────────────────────
+                    case "response.created":
+                        # Snapshot the turn this response is replying to
+                        self._response_turn = self._turn_count
+                        # Reset per-response state at the START of each response
+                        # (not in response.done, because truncated can arrive after it)
+                        self._response_audio_bytes = 0
+                        self._response_interrupted = False
+                        self._ts_response_created = time.monotonic()
+                        self._ts_first_transcript_delta = None
+
+                    case "response.audio_transcript.delta":
+                        # Capture timestamp of the first LLM text token
+                        if self._ts_first_transcript_delta is None:
+                            self._ts_first_transcript_delta = time.monotonic()
+
                     case (
-                        "response.created"
-                        | "response.output_item.added"
+                        "response.output_item.added"
                         | "response.content_part.added"
                         | "response.content_part.done"
                         | "response.output_item.done"
-                        | "response.audio_transcript.delta"
                     ):
                         pass
 
@@ -710,15 +768,49 @@ class VoiceLiveSession:
                     case "response.done":
                         resp = event.get("response", {})
                         status = resp.get("status")
-                        if status == "cancelled":
-                            details = resp.get("status_details", {})
+
+                        # Accumulate token usage
+                        usage = resp.get("usage", {})
+                        input_tokens = usage.get("input_tokens", 0)
+                        output_tokens = usage.get("output_tokens", 0)
+                        in_detail = usage.get("input_token_details", {})
+                        out_detail = usage.get("output_token_details", {})
+                        input_audio = in_detail.get("audio_tokens", 0)
+                        output_audio = out_detail.get("audio_tokens", 0)
+                        input_text = in_detail.get("text_tokens", 0)
+                        output_text = out_detail.get("text_tokens", 0)
+                        self._total_input_tokens += input_tokens
+                        self._total_output_tokens += output_tokens
+                        self._total_input_audio_tokens += input_audio
+                        self._total_output_audio_tokens += output_audio
+                        self._total_input_text_tokens += input_text
+                        self._total_output_text_tokens += output_text
+
+                        label = f"[Turn {self._response_turn}]" if self._response_turn else "[Greeting]"
+                        if input_tokens or output_tokens:
                             logger.info(
-                                "Response cancelled (reason=%s)",
-                                details.get("reason", "unknown"),
+                                "%s Tokens: in=%d (llm=%d, audio=%d), out=%d (llm=%d, audio=%d)",
+                                label, input_tokens, input_text, input_audio,
+                                output_tokens, output_text, output_audio,
                             )
+
+                        if status == "cancelled":
+                            if out_detail.get("audio_tokens", 0) == 0:
+                                self._preemption_count += 1
+                                logger.info(
+                                    "%s Agent response pre-empted (user spoke before agent replied)",
+                                    label,
+                                )
+                            else:
+                                logger.info(
+                                    "%s Agent response cancelled (reason=%s)",
+                                    label,
+                                    resp.get("status_details", {}).get("reason", "unknown"),
+                                )
                         elif status != "completed":
                             logger.error(
-                                "Response error: %s",
+                                "%s Agent response error: %s",
+                                label,
                                 json.dumps(resp.get("status_details", {})),
                             )
 
@@ -745,6 +837,19 @@ class VoiceLiveSession:
             logger.exception("Failed to send to browser")
 
     async def close(self):
+        complete_turns = self._agent_spoke_count - self._bargein_count
+        logger.info("=" * 50)
+        logger.info("SESSION SUMMARY")
+        logger.info("-" * 50)
+        logger.info("  User turns:         %d", self._turn_count)
+        logger.info("  Agent turns:        %d", self._agent_spoke_count)
+        logger.info("  Barge-ins:          %d", self._bargein_count)
+        logger.info("  Pre-emptions:       %d", self._preemption_count)
+        logger.info("  Complete turns:     %d", complete_turns)
+        logger.info("-" * 50)
+        logger.info("  LLM tokens:         in=%d, out=%d", self._total_input_text_tokens, self._total_output_text_tokens)
+        logger.info("  Audio tokens:       in=%d, out=%d", self._total_input_audio_tokens, self._total_output_audio_tokens)
+        logger.info("=" * 50)
         if self.vl_ws:
             try:
                 await self.vl_ws.close()

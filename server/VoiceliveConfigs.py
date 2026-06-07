@@ -48,8 +48,8 @@ configs = {
             "voice": {
                 "name": "en-IN-Diya:DragonHDLatestNeural",
                 "type": "azure-standard",
-                "temperature": 0.8,
-                "rate": "1.2",
+                "temperature": 0.4,
+                "rate": "1.05",
             },
 
             "temperature": 0.1,
